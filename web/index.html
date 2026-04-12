@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Industry Agent Platform</title>
+    <link rel="stylesheet" href="/static/styles/tokens.css" />
+    <link rel="stylesheet" href="/static/styles/base.css" />
+    <link rel="stylesheet" href="/static/styles/layout.css" />
+    <link rel="stylesheet" href="/static/styles/components.css" />
+    <link rel="stylesheet" href="/static/styles/pages.css" />
+  </head>
+  <body>
+    <div class="page-noise"></div>
+    <header class="topbar">
+      <div class="topbar-inner">
+        <div class="brand-area">
+          <div class="brand-mark">
+            <span></span>
+            <span></span>
+            <span></span>
+          </div>
+          <div class="brand-copy">
+            <div class="brand-kicker">INDUSTRY STUDIO</div>
+            <h1>智能预测平台</h1>
+          </div>
+        </div>
+
+        <nav class="topbar-nav" aria-label="主导航">
+          <button type="button" class="nav-pill active" data-route="home">首页</button>
+          <button type="button" class="nav-pill" data-route="projects">项目</button>
+          <button type="button" class="nav-pill" data-route="agent">Agent</button>
+          <button type="button" class="nav-pill" data-route="api">API 配置</button>
+        </nav>
+
+        <div class="topbar-meta">
+          <span id="health-chip" class="meta-chip muted">健康检查中</span>
+          <span id="context-project-chip" class="meta-chip">未选项目</span>
+        </div>
+      </div>
+    </header>
+
+    <div class="app-shell">
+      <main class="app-main">
+        <section id="page-hero" class="page-hero"></section>
+        <section id="view-root" class="view-root"></section>
+      </main>
+    </div>
+
+    <div id="toast-root" class="toast-root" aria-live="polite"></div>
+
+    <script type="module" src="/static/js/main.js"></script>
+  </body>
+</html>
