@@ -19,6 +19,22 @@
 python3 -m uvicorn server.main:app --reload
 ```
 
+## Gradio 托管（Space）
+
+当前仓库已新增 `app.py`，可直接作为 Gradio Space 的入口文件。
+
+本地验证：
+
+```bash
+python3 app.py
+```
+
+Gradio Space 部署要点：
+
+1. 确保仓库根目录包含 `app.py` 与 `requirements.txt`。
+2. `requirements.txt` 已包含 `gradio` 依赖。
+3. 推送代码后，平台会自动安装依赖并运行 `app.py`。
+
 打开：
 
 - Web 控制台: [http://127.0.0.1:8000/](http://127.0.0.1:8000/)
