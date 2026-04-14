@@ -1,42 +1,31 @@
-import datetime as dt
 import os
-
-import gradio as gr
-
-
-def greet(name: str) -> str:
-    """Simple starter handler for Space validation."""
-    safe_name = (name or "").strip() or "Industry Agent"
-    return f"Hello, {safe_name}! Gradio hosting is ready."
+import socket
+import uvicorn
 
 
-def get_runtime_info() -> str:
-    now = dt.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
-    return (
-        "Industry Agent Platform Space is online.\n"
-        f"- Timestamp: {now}\n"
-        f"- Python env: {os.environ.get('PYTHON_VERSION', 'default')}"
-    )
+def _resolve_host() -> str:
+    candidate = (os.environ.get("HOST") or "").strip()
+    if not candidate:
+        return "0.0.0.0"
+    if "://" in candidate or "/" in candidate:
+        return "0.0.0.0"
+    try:
+        socket.getaddrinfo(candidate, None)
+        return candidate
+    except OSError:
+        return "0.0.0.0"
 
 
-with gr.Blocks(title="Industry Agent Platform") as demo:
-    gr.Markdown(
-        """
-        # Industry Agent Platform (Gradio Space)
-        This is the Gradio entrypoint for hosted deployment.
-        """
-    )
-    with gr.Tab("Quick Check"):
-        name_input = gr.Textbox(label="Your name", placeholder="Type your name")
-        greet_output = gr.Textbox(label="Response")
-        greet_btn = gr.Button("Run")
-        greet_btn.click(fn=greet, inputs=name_input, outputs=greet_output)
-
-    with gr.Tab("Runtime"):
-        runtime_box = gr.Textbox(label="Runtime info", lines=6)
-        refresh_btn = gr.Button("Refresh")
-        refresh_btn.click(fn=get_runtime_info, outputs=runtime_box)
+def main() -> None:
+    """
+    Platform entrypoint:
+    keep full FastAPI + web frontend so training/prediction and Agent tool-calling
+    remain exactly the same as local development.
+    """
+    host = _resolve_host()
+    port = int(os.environ.get("PORT", "7860"))
+    uvicorn.run("server.main:app", host=host, port=port, log_level=os.environ.get("LOG_LEVEL", "info"))
 
 
 if __name__ == "__main__":
-    demo.launch()
+    main()

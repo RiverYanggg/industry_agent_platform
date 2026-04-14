@@ -19,9 +19,9 @@
 python3 -m uvicorn server.main:app --reload
 ```
 
-## Gradio 托管（Space）
+## 平台托管（Space）
 
-当前仓库已新增 `app.py`，可直接作为 Gradio Space 的入口文件。
+当前仓库使用根目录 `app.py` 作为平台入口文件。`app.py` 会启动 `server.main:app`，因此上线后展示的是项目原生前端（`web/index.html`），训练/预测与 Agent 能力保持完整。
 
 本地验证：
 
@@ -29,16 +29,16 @@ python3 -m uvicorn server.main:app --reload
 python3 app.py
 ```
 
-Gradio Space 部署要点：
+部署要点：
 
 1. 确保仓库根目录包含 `app.py` 与 `requirements.txt`。
-2. `requirements.txt` 已包含 `gradio` 依赖。
-3. 推送代码后，平台会自动安装依赖并运行 `app.py`。
+2. 推送代码后，平台自动安装依赖并执行 `python app.py`。
+3. 平台注入的 `PORT` 会被自动读取，无需手动改启动命令。
 
 打开：
 
-- Web 控制台: [http://127.0.0.1:8000/](http://127.0.0.1:8000/)
-- 健康检查: [http://127.0.0.1:8000/health](http://127.0.0.1:8000/health)
+- Web 控制台: [http://127.0.0.1:7860/](http://127.0.0.1:7860/)
+- 健康检查: [http://127.0.0.1:7860/health](http://127.0.0.1:7860/health)
 
 ## 配置 Agent 大模型
 
