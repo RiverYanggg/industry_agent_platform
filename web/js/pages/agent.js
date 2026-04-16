@@ -803,6 +803,9 @@ export function bindAgentPage(ctx, root) {
     if (ctx.state.pendingAttachments.length) {
       uploadedAttachments = await ctx.uploadPendingAttachments();
     }
+    const attachmentsForTurn = uploadedAttachments.length
+      ? uploadedAttachments
+      : (ctx.state.currentSession?.attachments || []);
     if (!message) {
       ctx.render();
       return;
@@ -810,8 +813,8 @@ export function bindAgentPage(ctx, root) {
     input.value = "";
     await ctx.streamTurn(
       message,
-      uploadedAttachments.map((item) => item.id),
-      uploadedAttachments
+      attachmentsForTurn.map((item) => item.id),
+      attachmentsForTurn
     );
   });
 
