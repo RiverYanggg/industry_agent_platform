@@ -147,7 +147,7 @@ function renderRichText(value, className) {
 function inlineMarkdown(value) {
   return escapeHtml(value)
     .replace(/\[(S\d+)\]/g, `<span class="source-chip">[$1]</span>`)
-    .replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, (_match, label, url) => {
+    .replace(/\[([^\]]+)\]\(((?:https?:\/\/|\/)[^\s)]+)\)/g, (_match, label, url) => {
       return `<a href="${escapeHtml(url)}" target="_blank" rel="noreferrer">${label}</a>`;
     })
     .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
