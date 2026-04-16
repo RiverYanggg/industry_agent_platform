@@ -2,6 +2,8 @@ import os
 import socket
 import uvicorn
 
+from server.main import app as app
+
 
 def _resolve_host() -> str:
     candidate = (os.environ.get("HOST") or "").strip()
@@ -19,12 +21,11 @@ def _resolve_host() -> str:
 def main() -> None:
     """
     Platform entrypoint:
-    keep full FastAPI + web frontend so training/prediction and Agent tool-calling
-    remain exactly the same as local development.
+    expose ASGI `app` for hosted platforms and keep direct local execution working.
     """
     host = _resolve_host()
     port = int(os.environ.get("PORT", "7860"))
-    uvicorn.run("server.main:app", host=host, port=port, log_level=os.environ.get("LOG_LEVEL", "info"))
+    uvicorn.run("app:app", host=host, port=port, log_level=os.environ.get("LOG_LEVEL", "info"))
 
 
 if __name__ == "__main__":
