@@ -218,7 +218,8 @@ async function selectSubProject(subprojectId, rerender = true) {
   if (!state.selectedProjectId || !subprojectId) return;
   state.selectedSubProjectId = subprojectId;
   state.selectedSubProject = await api(`/projects/${state.selectedProjectId}/subprojects/${subprojectId}`);
-  state.selectedModelId = state.selectedSubProject.models?.[0]?.id || null;
+  state.selectedModelId = null;
+  state.modelEditingId = null;
   state.singlePredictResult = null;
   state.manualPredictResult = null;
   const firstDataset = state.selectedSubProject.datasets?.[0];
@@ -320,18 +321,20 @@ function clearPendingAttachments() {
 }
 
 async function uploadPendingAttachments() {
-  if (!state.currentSessionId || !state.pendingAttachments.length) return;
+  if (!state.currentSessionId || !state.pendingAttachments.length) return [];
   state.agentUploading = true;
   render();
+  const uploaded = [];
   try {
     for (const item of state.pendingAttachments) {
       const form = new FormData();
       form.append("file", item.file);
       appendTerminal(`[attachment_upload] ${item.name} ${humanFileSize(item.size)}`);
-      await api(`/agent/sessions/${state.currentSessionId}/attachments`, { method: "POST", body: form });
+      uploaded.push(await api(`/agent/sessions/${state.currentSessionId}/attachments`, { method: "POST", body: form }));
     }
     clearPendingAttachments();
     await selectSession(state.currentSessionId);
+    return uploaded;
   } finally {
     state.agentUploading = false;
   }
@@ -372,16 +375,26 @@ function handleAgentEvent(event) {
   }
 }
 
-async function streamTurn(message) {
+async function streamTurn(message, attachmentIds = [], attachmentModels = []) {
   const controller = new AbortController();
   try {
     state.currentSession = state.currentSession || { messages: [], attachments: [], tools: [] };
-    state.currentSession.messages = [...(state.currentSession.messages || []), { role: "user", content: message, metadata: { events: [] } }];
+    state.currentSession.messages = [
+      ...(state.currentSession.messages || []),
+      {
+        role: "user",
+        content: message,
+        metadata: {
+          events: [],
+          attachments: attachmentModels,
+        },
+      },
+    ];
     state.agentAwaitingReply = true;
     state.agentAbortController = controller;
     resetAgentStream();
     render();
-    await readSseStream(`/agent/sessions/${state.currentSessionId}/turn`, { message }, handleAgentEvent, {
+    await readSseStream(`/agent/sessions/${state.currentSessionId}/turn`, { message, attachment_ids: attachmentIds }, handleAgentEvent, {
       signal: controller.signal,
     });
     if (state.currentSessionId) {

@@ -165,4 +165,7 @@ def get_session_tools(session_id: str) -> list[dict[str, Any]]:
 
 @router.post("/agent/sessions/{session_id}/turn")
 def run_agent_turn(session_id: str, payload: TurnRequest) -> StreamingResponse:
-    return StreamingResponse(stream_agent_turn(session_id, payload.message), media_type="text/event-stream")
+    return StreamingResponse(
+        stream_agent_turn(session_id, payload.message, payload.attachment_ids),
+        media_type="text/event-stream",
+    )

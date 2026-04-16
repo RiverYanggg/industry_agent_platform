@@ -40,10 +40,18 @@ def model_tool_payload(model: dict[str, Any]) -> dict[str, Any]:
     return {
         "id": model["id"],
         "name": model["name"],
+        "description": model.get("description", ""),
+        "task_type": model.get("task_type", ""),
         "feature_columns": model.get("feature_columns", []),
         "target_columns": model.get("target_columns", []),
         "metrics": model.get("metrics", {}),
     }
+
+
+def tokenize_model_selection_text(value: str) -> list[str]:
+    raw = str(value or "").lower()
+    normalized = "".join(char if (char.isalnum() or "\u4e00" <= char <= "\u9fff") else " " for char in raw)
+    return [item for item in normalized.split() if len(item) >= 2]
 
 
 def resolve_model_for_message(models: list[dict[str, Any]], message: str) -> dict[str, Any] | None:
@@ -55,7 +63,36 @@ def resolve_model_for_message(models: list[dict[str, Any]], message: str) -> dic
     for model in models:
         if model["id"].lower() in lowered or model["name"].lower() in lowered:
             return model
-    return None
+
+    query_tokens = tokenize_model_selection_text(message)
+    if not query_tokens:
+        return None
+
+    best_model: dict[str, Any] | None = None
+    best_score = 0
+    for model in models:
+        searchable_parts = [
+            model.get("id", ""),
+            model.get("name", ""),
+            model.get("description", ""),
+            model.get("task_type", ""),
+            " ".join(model.get("feature_columns", [])),
+            " ".join(model.get("target_columns", [])),
+            " ".join(model.get("metrics", {}).keys()),
+        ]
+        searchable_text = " ".join([str(item) for item in searchable_parts if item]).lower()
+        score = 0
+        for token in query_tokens:
+            if token in searchable_text:
+                score += 3
+            elif token in model.get("name", "").lower():
+                score += 5
+        if model.get("task_type") and model["task_type"] in lowered:
+            score += 4
+        if score > best_score:
+            best_score = score
+            best_model = model
+    return best_model if best_score > 0 else None
 
 
 def extract_prediction_inputs(message: str, feature_columns: list[str]) -> dict[str, Any]:
@@ -156,7 +193,7 @@ def build_dynamic_tools(project_id: str, subproject_id: str | None) -> list[dict
         tools.append(
             {
                 "name": "list_user_models",
-                "description": "列出当前子项目下已注册的用户模型。",
+                "description": "列出当前子项目下已注册的用户模型及描述，用于理解每个模型的适用场景。",
                 "schema": {"type": "object", "properties": {}},
             }
         )
@@ -167,7 +204,7 @@ def build_dynamic_tools(project_id: str, subproject_id: str | None) -> list[dict
         tools.append(
             {
                 "name": "predict_with_model",
-                "description": "使用当前子项目中的指定模型，对用户提供的一条结构化输入做单次预测。",
+                "description": "使用当前子项目中的指定模型，对用户提供的一条结构化输入做单次预测。若模型描述与用户问题可明确匹配，可自动选择模型。",
                 "schema": {
                     "type": "object",
                     "properties": {
@@ -198,8 +235,13 @@ def build_dynamic_tools(project_id: str, subproject_id: str | None) -> list[dict
     return tools
 
 
-def build_session_tool_catalog(session_id: str, project_id: str, subproject_id: str | None) -> dict[str, Any]:
-    attachments = list_session_attachment_models(session_id)
+def build_session_tool_catalog(
+    session_id: str,
+    project_id: str,
+    subproject_id: str | None,
+    attachment_ids: list[str] | None = None,
+) -> dict[str, Any]:
+    attachments, active_attachment = resolve_turn_attachments(session_id, attachment_ids)
     models = list_subproject_models(subproject_id) if subproject_id else []
     subprojects = list_project_subprojects(project_id)
     tools: list[dict[str, Any]] = [
@@ -244,7 +286,7 @@ def build_session_tool_catalog(session_id: str, project_id: str, subproject_id: 
         tools.append(
             {
                 "name": "list_user_models",
-                "description": "列出当前子项目下可用的用户模型。",
+                "description": "列出当前子项目下可用的用户模型及描述。",
                 "parameters": {"type": "object", "properties": {}},
             }
         )
@@ -252,14 +294,14 @@ def build_session_tool_catalog(session_id: str, project_id: str, subproject_id: 
         tools.append(
             {
                 "name": "predict_with_model",
-                "description": "使用当前子项目模型，对一条结构化输入做单次预测。",
+                "description": "使用当前子项目模型，对一条结构化输入做单次预测。多模型时应优先依据模型描述、输入字段、输出目标选择最合适的模型。",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "model_id": {
                             "type": "string",
                             "enum": [item["id"] for item in models],
-                            "description": "模型 ID；如只存在一个模型，可省略。",
+                            "description": "模型 ID；如只存在一个模型，或能根据用户问题与模型描述明确匹配，可省略。",
                         },
                         "inputs": {
                             "type": "object",
@@ -274,14 +316,14 @@ def build_session_tool_catalog(session_id: str, project_id: str, subproject_id: 
         tools.append(
             {
                 "name": "batch_predict_with_file",
-                "description": "使用模型对表格附件做批量预测。",
+                "description": "使用模型对表格附件做批量预测。多模型时应优先依据模型描述、字段语义和用户意图选择模型。",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "model_id": {
                             "type": "string",
                             "enum": [item["id"] for item in models],
-                            "description": "模型 ID；如只存在一个模型，可省略。",
+                            "description": "模型 ID；如只存在一个模型，或能根据用户问题与模型描述明确匹配，可省略。",
                         },
                         "attachment_id": {
                             "type": "string",
@@ -295,13 +337,20 @@ def build_session_tool_catalog(session_id: str, project_id: str, subproject_id: 
     return {
         "tools": tools,
         "attachments": attachments,
+        "active_attachment": active_attachment,
         "models": models,
         "subprojects": subprojects,
     }
 
 
-def heuristic_tool_plan(message: str, project_id: str, subproject_id: str | None, session_id: str) -> dict[str, Any]:
-    catalog = build_session_tool_catalog(session_id, project_id, subproject_id)
+def heuristic_tool_plan(
+    message: str,
+    project_id: str,
+    subproject_id: str | None,
+    session_id: str,
+    attachment_ids: list[str] | None = None,
+) -> dict[str, Any]:
+    catalog = build_session_tool_catalog(session_id, project_id, subproject_id, attachment_ids)
     attachments = catalog["attachments"]
     models = catalog["models"]
     plan: list[dict[str, Any]] = []
@@ -337,9 +386,16 @@ def heuristic_tool_plan(message: str, project_id: str, subproject_id: str | None
     return {"assistant_message": "", "tool_calls": plan[:4]}
 
 
-def invoke_tool(session_id: str, project_id: str, subproject_id: str | None, tool_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
-    attachments = list_session_attachment_models(session_id)
-    latest_attachment_item = attachments[0] if attachments else None
+def invoke_tool(
+    session_id: str,
+    project_id: str,
+    subproject_id: str | None,
+    tool_name: str,
+    arguments: dict[str, Any],
+    user_message: str = "",
+    attachment_ids: list[str] | None = None,
+) -> dict[str, Any]:
+    attachments, latest_attachment_item = resolve_turn_attachments(session_id, attachment_ids)
     models = list_subproject_models(subproject_id) if subproject_id else []
 
     if tool_name == "search_project_kb":
@@ -365,6 +421,10 @@ def invoke_tool(session_id: str, project_id: str, subproject_id: str | None, too
         model_id = str(arguments.get("model_id") or "")
         if not model_id and len(models) == 1:
             model_id = models[0]["id"]
+        if not model_id:
+            matched_model = resolve_model_for_message(models, user_message)
+            if matched_model:
+                model_id = matched_model["id"]
         if not model_id:
             raise HTTPException(status_code=400, detail="predict_with_model requires model_id when multiple models exist.")
         inputs = arguments.get("inputs") if isinstance(arguments.get("inputs"), dict) else {}
@@ -395,6 +455,10 @@ def invoke_tool(session_id: str, project_id: str, subproject_id: str | None, too
         if not model_id and len(models) == 1:
             model_id = models[0]["id"]
         if not model_id:
+            matched_model = resolve_model_for_message(models, user_message)
+            if matched_model:
+                model_id = matched_model["id"]
+        if not model_id:
             raise HTTPException(status_code=400, detail="batch_predict_with_file requires model_id when multiple models exist.")
         prediction = perform_batch_prediction(
             model_id,
@@ -406,9 +470,15 @@ def invoke_tool(session_id: str, project_id: str, subproject_id: str | None, too
     raise HTTPException(status_code=404, detail=f"Unsupported tool: {tool_name}")
 
 
-def plan_with_llm(session_id: str, project_id: str, subproject_id: str | None, user_message: str) -> dict[str, Any]:
+def plan_with_llm(
+    session_id: str,
+    project_id: str,
+    subproject_id: str | None,
+    user_message: str,
+    attachment_ids: list[str] | None = None,
+) -> dict[str, Any]:
     config = load_agent_settings()
-    catalog = build_session_tool_catalog(session_id, project_id, subproject_id)
+    catalog = build_session_tool_catalog(session_id, project_id, subproject_id, attachment_ids)
     client = build_openai_client(config)
     payload = {
         "context": {
@@ -416,6 +486,7 @@ def plan_with_llm(session_id: str, project_id: str, subproject_id: str | None, u
             "subproject_id": subproject_id,
             "attachment_count": len(catalog["attachments"]),
             "model_count": len(catalog["models"]),
+            "active_attachment_id": catalog["active_attachment"]["id"] if catalog["active_attachment"] else None,
         },
         "available_tools": catalog["tools"],
         "attachments": [{"id": item["id"], "filename": item["filename"], "columns": item["columns"]} for item in catalog["attachments"]],
@@ -528,6 +599,18 @@ def latest_attachment(session_id: str) -> dict[str, Any] | None:
     return serialize_attachment(row) if row else None
 
 
+def resolve_turn_attachments(session_id: str, attachment_ids: list[str] | None = None) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
+    all_attachments = list_session_attachment_models(session_id)
+    if not attachment_ids:
+        return all_attachments, (all_attachments[0] if all_attachments else None)
+
+    requested_ids = {str(item) for item in attachment_ids if str(item).strip()}
+    prioritized = [item for item in all_attachments if item["id"] in requested_ids]
+    remaining = [item for item in all_attachments if item["id"] not in requested_ids]
+    ordered = prioritized + remaining
+    return ordered, (prioritized[0] if prioritized else (ordered[0] if ordered else None))
+
+
 def fallback_summary(
     message: str,
     project_name: str,
@@ -595,16 +678,34 @@ def stream_text_chunks(text: str):
         time.sleep(0.03)
 
 
-def stream_agent_turn(session_id: str, message: str):
+def stream_agent_turn(session_id: str, message: str, attachment_ids: list[str] | None = None):
     session_row = fetch_one("SELECT * FROM agent_sessions WHERE id = ?", (session_id,))
     if not session_row:
         raise HTTPException(status_code=404, detail="Session not found.")
     session = dict(session_row)
-    create_message(session_id, "user", message)
+    attachments, attachment = resolve_turn_attachments(session_id, attachment_ids)
+    requested_ids = {str(value) for value in (attachment_ids or []) if str(value).strip()}
+    bound_attachments = [item for item in attachments if item["id"] in requested_ids]
+    create_message(
+        session_id,
+        "user",
+        message,
+        metadata={
+            "attachments": [
+                {
+                    "id": item["id"],
+                    "filename": item["filename"],
+                    "download_url": item["download_url"],
+                    "is_image": item["is_image"],
+                    "size_bytes": item["size_bytes"],
+                }
+                for item in bound_attachments
+            ]
+        },
+    )
 
     project = fetch_one("SELECT * FROM projects WHERE id = ?", (session["project_id"],))
     subproject = fetch_one("SELECT * FROM subprojects WHERE id = ?", (session["subproject_id"],)) if session["subproject_id"] else None
-    attachment = latest_attachment(session_id)
 
     events: list[dict[str, Any]] = []
     tool_results: list[dict[str, Any]] = []
@@ -619,6 +720,7 @@ def stream_agent_turn(session_id: str, message: str):
             "project": project["name"] if project else "Unknown",
             "subproject": subproject["name"] if subproject else "未绑定子项目",
             "attachment": attachment["filename"] if attachment else None,
+            "attachment_ids": [item["id"] for item in bound_attachments],
         },
     )
 
@@ -627,15 +729,15 @@ def stream_agent_turn(session_id: str, message: str):
 
     try:
         if config["runtime_mode"] == "llm":
-            plan = plan_with_llm(session_id, session["project_id"], session["subproject_id"] or None, message)
+            plan = plan_with_llm(session_id, session["project_id"], session["subproject_id"] or None, message, attachment_ids)
             yield emit("terminal_stdout", {"text": f"[planner] using upstream model {config['model']}"})
             yield emit("tool_plan", {"assistant_message": plan["assistant_message"], "tool_calls": plan["tool_calls"]})
         else:
-            plan = heuristic_tool_plan(message, session["project_id"], session["subproject_id"] or None, session_id)
+            plan = heuristic_tool_plan(message, session["project_id"], session["subproject_id"] or None, session_id, attachment_ids)
             yield emit("terminal_stdout", {"text": "[planner] using local fallback planner"})
             yield emit("tool_plan", plan)
     except Exception as exc:  # noqa: BLE001
-        plan = heuristic_tool_plan(message, session["project_id"], session["subproject_id"] or None, session_id)
+        plan = heuristic_tool_plan(message, session["project_id"], session["subproject_id"] or None, session_id, attachment_ids)
         yield emit("terminal_stdout", {"text": f"[planner_fallback] {exc}"})
         yield emit("tool_plan", plan)
 
@@ -649,6 +751,8 @@ def stream_agent_turn(session_id: str, message: str):
                 session["subproject_id"] or None,
                 tool_call["name"],
                 tool_call.get("arguments", {}),
+                message,
+                attachment_ids,
             )
             duration = int((time.perf_counter() - started_at) * 1000)
             tool_payload = {"tool": tool_call["name"], "status": "success", "duration_ms": duration, "result": result}

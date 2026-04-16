@@ -50,6 +50,11 @@ class ModelRegisterRequest(BaseModel):
     name: str
 
 
+class ModelUpdate(BaseModel):
+    name: str | None = None
+    description: str | None = None
+
+
 class SinglePredictionRequest(BaseModel):
     inputs: dict[str, Any] = Field(default_factory=dict)
 
@@ -69,6 +74,7 @@ class SessionUpdate(BaseModel):
 
 class TurnRequest(BaseModel):
     message: str
+    attachment_ids: list[str] = Field(default_factory=list)
 
 
 class ChatCompletionRequest(BaseModel):

@@ -7,6 +7,18 @@ const AGENT_PRESETS = [
   { icon: "↻", label: "批量预测", prompt: "请使用当前子项目模型对最近上传的附件执行批量预测" },
 ];
 
+const PAPERCLIP_ICON = `
+  <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
+    <path
+      d="M7.75 10.75 12.7 5.8a3 3 0 1 1 4.24 4.25l-6.37 6.36a5 5 0 1 1-7.07-7.07l7.08-7.07"
+      stroke="currentColor"
+      stroke-width="1.8"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+    />
+  </svg>
+`;
+
 function modelOptions(ctx) {
   const options = [{ id: "local-fallback", label: "本地回退", enabled: true }];
   (ctx.state.llmProfiles || []).forEach((profile) => {
@@ -101,6 +113,23 @@ function collectSources(events = []) {
   return uniqueBy(items, (hit) => `${hit.citation}-${hit.doc_id}-${hit.chunk_index}`);
 }
 
+function sourceKey(source) {
+  return `${source.citation || "S"}-${source.doc_id || "doc"}-${source.chunk_index ?? 0}`;
+}
+
+function stripCitationFooter(text) {
+  return String(text || "").replace(/\n{2,}引用来源：[\s\S]*$/u, "").trim();
+}
+
+function renderAgentContent(content, sources) {
+  const html = formatContent(sources.length ? stripCitationFooter(content) : content);
+  return html.replace(
+    /<span class="source-chip">\[(S\d+)\]<\/span>/g,
+    (_match, marker) =>
+      `<button type="button" class="source-chip source-chip--interactive" data-citation-marker="${marker}" aria-label="查看 ${marker} 的引用详情">[${marker}]</button>`
+  );
+}
+
 function renderToolEvent(event) {
   const payload = event.payload || {};
   const title =
@@ -137,25 +166,84 @@ function renderToolEvent(event) {
   `;
 }
 
-function renderSources(sources) {
-  if (!sources.length) return "";
+function renderMessageAttachments(attachments = []) {
+  if (!attachments.length) return "";
   return `
-    <div class="source-list">
-      ${sources
+    <div class="attachment-inline-list">
+      ${attachments
         .map(
-          (source) => `
-            <article class="source-card">
-              <div class="source-card-head">
-                <span class="source-chip">[${escapeHtml(source.citation || "S")}]</span>
-                <span class="source-name">${escapeHtml(source.filename || "未命名文档")}</span>
-                <span class="mini-meta">chunk ${escapeHtml(source.chunk_index)}</span>
+          (item) => `
+            <article class="attachment-card">
+              ${
+                item.is_image && item.download_url
+                  ? `<img class="attachment-thumb" src="${item.download_url}" alt="${escapeHtml(item.filename || "附件")}" />`
+                  : `<div class="attachment-file-icon">${escapeHtml((item.filename || "FILE").split(".").pop()?.toUpperCase() || "FILE")}</div>`
+              }
+              <div>
+                <strong>${escapeHtml(item.filename || "未命名附件")}</strong>
+                <div class="mini-meta">${item.size_bytes ? humanFileSize(item.size_bytes) : "已绑定到本条消息"}</div>
               </div>
-              <div class="source-snippet">${escapeHtml(source.content || "")}</div>
-              ${source.download_url ? `<a href="${source.download_url}" target="_blank">打开原文</a>` : ""}
+              ${item.download_url ? `<a href="${item.download_url}" target="_blank">打开</a>` : ""}
             </article>
           `
         )
         .join("")}
+    </div>
+  `;
+}
+
+function renderSources(sources, messageKey, activeSourceKey) {
+  if (!sources.length) return "";
+  const activeSource = sources.find((source) => sourceKey(source) === activeSourceKey) || null;
+  return `
+    <div class="source-list">
+      <div class="source-reference-head">
+        <span class="mini-meta">引用来源</span>
+      </div>
+      <div class="source-reference-list">
+      ${sources
+        .map(
+          (source) => `
+            <button
+              type="button"
+              class="source-ref-item ${sourceKey(source) === activeSourceKey ? "is-active" : ""}"
+              data-message-key="${messageKey}"
+              data-source-key="${sourceKey(source)}"
+              data-citation-marker="${escapeHtml(source.citation || "S")}"
+              aria-expanded="${sourceKey(source) === activeSourceKey ? "true" : "false"}"
+            >
+              <span class="source-chip">[${escapeHtml(source.citation || "S")}]</span>
+              <span class="source-ref-text">${escapeHtml(source.filename || "未命名文档")} / chunk ${escapeHtml(source.chunk_index)}</span>
+              <span class="source-ref-icon">${PAPERCLIP_ICON}</span>
+            </button>
+          `
+        )
+        .join("")}
+      </div>
+      ${
+        activeSource
+          ? `
+            <article class="source-card source-detail-panel" data-message-key="${messageKey}" data-source-detail="${sourceKey(activeSource)}">
+              <div class="source-card-head">
+                <div class="source-detail-title">
+                  <span class="source-chip">[${escapeHtml(activeSource.citation || "S")}]</span>
+                  <span class="source-name">${escapeHtml(activeSource.filename || "未命名文档")}</span>
+                  <span class="mini-meta">chunk ${escapeHtml(activeSource.chunk_index)}</span>
+                </div>
+                <button
+                  type="button"
+                  class="ghost-btn source-detail-close"
+                  data-message-key="${messageKey}"
+                  data-source-key="${sourceKey(activeSource)}"
+                  aria-label="收起引用详情"
+                >收起</button>
+              </div>
+              <div class="source-snippet">${escapeHtml(activeSource.content || "")}</div>
+              ${activeSource.download_url ? `<a href="${activeSource.download_url}" target="_blank">打开原文</a>` : ""}
+            </article>
+          `
+          : ""
+      }
     </div>
   `;
 }
@@ -167,11 +255,13 @@ function showToolInChat(ctx, event) {
   return false;
 }
 
-function renderMessage(ctx, message, events = [], streaming = false) {
+function renderMessage(ctx, message, events = [], streaming = false, messageKey = "msg") {
   const visibleEvents = events.filter((event) => ["tool_plan", "tool_start", "tool_result", "file_ready"].includes(event.type)).filter((event) => showToolInChat(ctx, event));
   const sources = collectSources(events);
+  const activeSourceKey = ctx.state.agentCitationPanels?.[messageKey] || null;
+  const messageAttachments = Array.isArray(message.metadata?.attachments) ? message.metadata.attachments : [];
   return `
-    <div class="chat-message ${message.role}">
+    <div class="chat-message ${message.role}" data-message-key="${messageKey}">
       <div class="message-shell">
         <div class="message-meta">
           <span class="meta-chip">${message.role === "assistant" ? "助手" : "你"}</span>
@@ -184,9 +274,10 @@ function renderMessage(ctx, message, events = [], streaming = false) {
         </div>
         ${visibleEvents.length ? `<div class="tool-stack">${visibleEvents.map((event) => renderToolEvent(event)).join("")}</div>` : ""}
         <div class="message-bubble">
-          <div class="message-body">${formatContent(message.content || "")}</div>
+          <div class="message-body">${renderAgentContent(message.content || "", sources)}</div>
         </div>
-        ${renderSources(sources)}
+        ${message.role === "user" ? renderMessageAttachments(messageAttachments) : ""}
+        ${renderSources(sources, messageKey, activeSourceKey)}
       </div>
     </div>
   `;
@@ -204,7 +295,9 @@ function renderTimeline(ctx) {
       </div>
     `;
   }
-  const finished = messages.map((message) => renderMessage(ctx, message, message.metadata?.events || [], false)).join("");
+  const finished = messages
+    .map((message, index) => renderMessage(ctx, message, message.metadata?.events || [], false, message.id || `history-${index}`))
+    .join("");
   const typingPlaceholder =
     ctx.state.agentAwaitingReply && !ctx.state.agentStreamingMessage
       ? `
@@ -223,7 +316,8 @@ function renderTimeline(ctx) {
         ctx,
         { role: "assistant", content: ctx.state.agentStreamingMessage },
         ctx.state.agentLiveEvents,
-        true
+        true,
+        "streaming"
       )
     : typingPlaceholder;
   return `${finished}${streaming}`;
@@ -362,13 +456,20 @@ export function renderAgentPage(ctx) {
               <div class="chat-shell-head">
                 <div class="chat-shell-title">
                   <div class="chat-title">${escapeHtml(currentSessionTitle)}</div>
-                  <div class="inline-cluster">
-                    <span class="meta-chip">${escapeHtml(currentProject?.name || "未选项目")}</span>
-                    ${
-                      currentSubProjectId
-                        ? `<span class="meta-chip muted">${escapeHtml(subprojects.find((item) => item.id === currentSubProjectId)?.name || "子项目")}</span>`
-                        : ""
-                    }
+                  <div class="agent-context-pickers">
+                    <label class="agent-context-picker">
+                      <span class="agent-context-label">项目</span>
+                      <select id="agent-project-select" class="agent-context-select">
+                        ${ctx.state.projects.map((project) => `<option value="${project.id}" ${project.id === currentProjectId ? "selected" : ""}>${escapeHtml(project.name)}</option>`).join("")}
+                      </select>
+                    </label>
+                    <label class="agent-context-picker">
+                      <span class="agent-context-label">子项目</span>
+                      <select id="agent-subproject-select" class="agent-context-select">
+                        <option value="">未绑定子项目</option>
+                        ${subprojects.map((item) => `<option value="${item.id}" ${item.id === currentSubProjectId ? "selected" : ""}>${escapeHtml(item.name)}</option>`).join("")}
+                      </select>
+                    </label>
                   </div>
                 </div>
                 <div class="toolbar-row">
@@ -376,22 +477,6 @@ export function renderAgentPage(ctx) {
                   <button type="button" class="ghost-btn" id="toggle-debug-btn">${ctx.state.showAgentDebug ? "收起详情" : "执行详情"}</button>
                   <button type="button" class="ghost-btn" id="rename-session-btn" ${ctx.state.currentSession ? "" : "disabled"}>重命名</button>
                 </div>
-              </div>
-
-              <div class="chat-context-bar">
-                <label class="field-label">
-                  <span>项目</span>
-                  <select id="agent-project-select">
-                    ${ctx.state.projects.map((project) => `<option value="${project.id}" ${project.id === currentProjectId ? "selected" : ""}>${escapeHtml(project.name)}</option>`).join("")}
-                  </select>
-                </label>
-                <label class="field-label">
-                  <span>子项目</span>
-                  <select id="agent-subproject-select">
-                    <option value="">未绑定子项目</option>
-                    ${subprojects.map((item) => `<option value="${item.id}" ${item.id === currentSubProjectId ? "selected" : ""}>${escapeHtml(item.name)}</option>`).join("")}
-                  </select>
-                </label>
               </div>
 
               <div class="chat-surface">
@@ -481,6 +566,22 @@ export function renderAgentPage(ctx) {
 }
 
 export function bindAgentPage(ctx, root) {
+  const toggleCitation = (messageKey, targetSourceKey) => {
+    const current = ctx.state.agentCitationPanels?.[messageKey] || null;
+    ctx.state.agentCitationPanels = {
+      ...(ctx.state.agentCitationPanels || {}),
+      [messageKey]: current === targetSourceKey ? null : targetSourceKey,
+    };
+    ctx.render();
+    if (current === targetSourceKey) return;
+    requestAnimationFrame(() => {
+      root.querySelector(`.source-detail-panel[data-message-key="${messageKey}"]`)?.scrollIntoView({
+        block: "nearest",
+        behavior: "smooth",
+      });
+    });
+  };
+
   root.querySelector("#agent-model-select")?.addEventListener("change", async (event) => {
     const modelId = event.target.value;
     const selectedProfile = (ctx.state.llmProfiles || []).find((item) => item.id === modelId);
@@ -663,6 +764,27 @@ export function bindAgentPage(ctx, root) {
     ctx.stopAgentStream();
   });
 
+  root.querySelectorAll("[data-source-key][data-message-key]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const messageKey = button.dataset.messageKey;
+      const targetSourceKey = button.dataset.sourceKey;
+      if (!messageKey || !targetSourceKey) return;
+      toggleCitation(messageKey, targetSourceKey);
+    });
+  });
+
+  root.querySelectorAll("[data-citation-marker]").forEach((button) => {
+    if (button.dataset.sourceKey) return;
+    button.addEventListener("click", () => {
+      const messageNode = button.closest(".chat-message");
+      const messageKey = messageNode?.dataset.messageKey;
+      const marker = button.dataset.citationMarker;
+      const target = messageNode?.querySelector(`.source-ref-item[data-citation-marker="${marker}"]`);
+      if (!messageKey || !target?.dataset.sourceKey) return;
+      toggleCitation(messageKey, target.dataset.sourceKey);
+    });
+  });
+
   root.querySelector("#agent-composer")?.addEventListener("submit", async (event) => {
     event.preventDefault();
     if (ctx.state.agentAwaitingReply) return;
@@ -677,15 +799,20 @@ export function bindAgentPage(ctx, root) {
     const subprojectId = root.querySelector("#agent-subproject-select").value || null;
     const sessionId = await ctx.ensureAgentSession({ projectId, subprojectId, title: `会话 ${new Date().toLocaleTimeString()}` });
     await ctx.selectSession(sessionId);
+    let uploadedAttachments = [];
     if (ctx.state.pendingAttachments.length) {
-      await ctx.uploadPendingAttachments();
+      uploadedAttachments = await ctx.uploadPendingAttachments();
     }
     if (!message) {
       ctx.render();
       return;
     }
     input.value = "";
-    await ctx.streamTurn(message);
+    await ctx.streamTurn(
+      message,
+      uploadedAttachments.map((item) => item.id),
+      uploadedAttachments
+    );
   });
 
   const dropzone = root.querySelector("#agent-dropzone");
